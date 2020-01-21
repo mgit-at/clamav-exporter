@@ -5,13 +5,13 @@ package main
 
 import (
 	"errors"
-	"log"
 	"regexp"
 	"strconv"
 	"time"
 
 	"github.com/imgurbot12/clamd"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/shenwei356/util/bytesize"
 )
 
 const (
@@ -23,6 +23,8 @@ var (
 
 	clamdStatsQueueRegexp   = regexp.MustCompile(`^(\d+)\s+item.*$`)
 	clamdStatsThreadsRegexp = regexp.MustCompile(`^live\s+(\d+)\s+idle\s+(\d+)\s+max\s+(\d+)\s+idle-timeout\s+(\d+)$`)
+	clamdStatsMemRegexp     = regexp.MustCompile(`^heap\s+(\d+.\d+\w)\s+mmap\s+(\d+.\d+\w)\s+used\s+(\d+.\d+\w)\s+free\s+(\d+.\d+\w)\s+releasable\s+(\d+.\d+\w)` +
+		`\s+pools\s+(\d+)\s+pools_used\s+(\d+.\d+\w)\s+pools_total\s+(\d+.\d+\w)$`)
 )
 
 type ClamDOptions struct {
@@ -32,13 +34,21 @@ type ClamDOptions struct {
 type ClamDChecker struct {
 	opts ClamDOptions
 
-	promClamDUp               *prometheus.Desc
-	promClamDDBVersion        *prometheus.Desc
-	promClamDDBTime           *prometheus.Desc
-	promClamDStatsQueueLength *prometheus.Desc
-	promClamDStatsThreadsLive *prometheus.Desc
-	promClamDStatsThreadsIdle *prometheus.Desc
-	promClamDStatsThreadsMax  *prometheus.Desc
+	promClamDUp                 *prometheus.Desc
+	promClamDDBVersion          *prometheus.Desc
+	promClamDDBTime             *prometheus.Desc
+	promClamDStatsQueueLength   *prometheus.Desc
+	promClamDStatsThreadsLive   *prometheus.Desc
+	promClamDStatsThreadsIdle   *prometheus.Desc
+	promClamDStatsThreadsMax    *prometheus.Desc
+	promClamDStatsMemHeap       *prometheus.Desc
+	promClamDStatsMemMMap       *prometheus.Desc
+	promClamDStatsMemUsed       *prometheus.Desc
+	promClamDStatsMemFree       *prometheus.Desc
+	promClamDStatsMemReleasable *prometheus.Desc
+	promClamDStatsMemPools      *prometheus.Desc
+	promClamDStatsMemPoolsUsed  *prometheus.Desc
+	promClamDStatsMemPoolsTotal *prometheus.Desc
 }
 
 func NewClamDChecker(opts ClamDOptions) *ClamDChecker {
@@ -66,7 +76,7 @@ func NewClamDChecker(opts ClamDOptions) *ClamDChecker {
 			nil),
 		promClamDStatsThreadsLive: prometheus.NewDesc(
 			"clamav_clamd_stats_threads_live",
-			"number of  busy clamd threads",
+			"number of busy clamd threads",
 			[]string{},
 			nil),
 		promClamDStatsThreadsIdle: prometheus.NewDesc(
@@ -77,6 +87,46 @@ func NewClamDChecker(opts ClamDOptions) *ClamDChecker {
 		promClamDStatsThreadsMax: prometheus.NewDesc(
 			"clamav_clamd_stats_threads_max",
 			"maximum number of clamd threads",
+			[]string{},
+			nil),
+		promClamDStatsMemHeap: prometheus.NewDesc(
+			"clamav_clamd_stats_mem_heap",
+			"amount of memory used by libc from the heap",
+			[]string{},
+			nil),
+		promClamDStatsMemMMap: prometheus.NewDesc(
+			"clamav_clamd_stats_mem_mmap",
+			"amount of memory used by libc from mmap-allocated memory",
+			[]string{},
+			nil),
+		promClamDStatsMemUsed: prometheus.NewDesc(
+			"clamav_clamd_stats_mem_used",
+			"amount of useful memory allocated by libc",
+			[]string{},
+			nil),
+		promClamDStatsMemFree: prometheus.NewDesc(
+			"clamav_clamd_stats_mem_free",
+			"amount of memory allocated by libc, that can't be freed due to fragmentation",
+			[]string{},
+			nil),
+		promClamDStatsMemReleasable: prometheus.NewDesc(
+			"clamav_clamd_stats_mem_realeasable",
+			"amount of memory that can be reclaimed by libc",
+			[]string{},
+			nil),
+		promClamDStatsMemPools: prometheus.NewDesc(
+			"clamav_clamd_stats_mem_pools",
+			"number of mmap regions allocated by clamd's memory pool allocator",
+			[]string{},
+			nil),
+		promClamDStatsMemPoolsUsed: prometheus.NewDesc(
+			"clamav_clamd_stats_mem_pools_used",
+			"amount of memory used by clamd's memory pool allocator",
+			[]string{},
+			nil),
+		promClamDStatsMemPoolsTotal: prometheus.NewDesc(
+			"clamav_clamd_stats_mem_pools_total",
+			"total amount of memory allocated by clamd's memory pool allocator",
 			[]string{},
 			nil),
 	}
@@ -90,6 +140,14 @@ func (c *ClamDChecker) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.promClamDStatsThreadsLive
 	ch <- c.promClamDStatsThreadsIdle
 	ch <- c.promClamDStatsThreadsMax
+	ch <- c.promClamDStatsMemHeap
+	ch <- c.promClamDStatsMemMMap
+	ch <- c.promClamDStatsMemUsed
+	ch <- c.promClamDStatsMemFree
+	ch <- c.promClamDStatsMemReleasable
+	ch <- c.promClamDStatsMemPools
+	ch <- c.promClamDStatsMemPoolsUsed
+	ch <- c.promClamDStatsMemPoolsTotal
 }
 
 func (c *ClamDChecker) Collect(ch chan<- prometheus.Metric) {
@@ -120,8 +178,9 @@ func (c *ClamDChecker) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDStatsQueueLength,
 		prometheus.GaugeValue,
-		float64(stats.QueueLength),
+		float64(stats.Queue.Length),
 	)
+
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDStatsThreadsLive,
 		prometheus.GaugeValue,
@@ -136,6 +195,47 @@ func (c *ClamDChecker) Collect(ch chan<- prometheus.Metric) {
 		c.promClamDStatsThreadsMax,
 		prometheus.GaugeValue,
 		float64(stats.Threads.Max),
+	)
+
+	ch <- prometheus.MustNewConstMetric(
+		c.promClamDStatsMemHeap,
+		prometheus.GaugeValue,
+		float64(stats.Mem.Heap),
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.promClamDStatsMemMMap,
+		prometheus.GaugeValue,
+		float64(stats.Mem.MMap),
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.promClamDStatsMemUsed,
+		prometheus.GaugeValue,
+		float64(stats.Mem.Used),
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.promClamDStatsMemFree,
+		prometheus.GaugeValue,
+		float64(stats.Mem.Free),
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.promClamDStatsMemReleasable,
+		prometheus.GaugeValue,
+		float64(stats.Mem.Releasable),
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.promClamDStatsMemPools,
+		prometheus.GaugeValue,
+		float64(stats.Mem.Pools.Count),
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.promClamDStatsMemPoolsUsed,
+		prometheus.GaugeValue,
+		float64(stats.Mem.Pools.Used),
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.promClamDStatsMemPoolsTotal,
+		prometheus.GaugeValue,
+		float64(stats.Mem.Pools.Total),
 	)
 }
 
@@ -169,19 +269,35 @@ func (c *ClamDChecker) collectVersion() (version string, dbVersion int, dbTime t
 }
 
 type clamdStats struct {
-	QueueLength int
-	Threads     struct {
+	Queue struct {
+		Length int
+	}
+	Threads struct {
 		Live int
 		Idle int
 		Max  int
 	}
+	Mem struct {
+		Heap       bytesize.ByteSize
+		MMap       bytesize.ByteSize
+		Used       bytesize.ByteSize
+		Free       bytesize.ByteSize
+		Releasable bytesize.ByteSize
+
+		Pools struct {
+			Count int
+			Used  bytesize.ByteSize
+			Total bytesize.ByteSize
+		}
+	}
 }
 
 func (c *ClamDChecker) collectStats() (stats clamdStats, err error) {
-	stats.QueueLength = -1
+	stats.Queue.Length = -1
 	stats.Threads.Live = -1
 	stats.Threads.Idle = -1
 	stats.Threads.Max = -1
+	stats.Mem.Pools.Count = -1
 
 	var cl *clamd.ClamD
 	if cl, err = clamd.NewClamd(c.opts.URL); err != nil {
@@ -192,11 +308,10 @@ func (c *ClamDChecker) collectStats() (stats clamdStats, err error) {
 	if s, err = cl.Stats(); err != nil {
 		return
 	}
-	log.Printf("%#v", s)
 
 	q := clamdStatsQueueRegexp.FindStringSubmatch(s.Queue)
 	if len(q) == 2 {
-		stats.QueueLength, _ = strconv.Atoi(q[1])
+		stats.Queue.Length, _ = strconv.Atoi(q[1])
 	}
 
 	t := clamdStatsThreadsRegexp.FindStringSubmatch(s.Threads)
@@ -206,49 +321,19 @@ func (c *ClamDChecker) collectStats() (stats clamdStats, err error) {
 		stats.Threads.Max, _ = strconv.Atoi(t[3])
 	}
 
+	m := clamdStatsMemRegexp.FindStringSubmatch(s.Memstats)
+	if len(m) == 9 {
+		stats.Mem.Heap, _ = bytesize.Parse([]byte(m[1]))
+		stats.Mem.MMap, _ = bytesize.Parse([]byte(m[2]))
+		stats.Mem.Used, _ = bytesize.Parse([]byte(m[3]))
+		stats.Mem.Free, _ = bytesize.Parse([]byte(m[4]))
+		stats.Mem.Releasable, _ = bytesize.Parse([]byte(m[5]))
+		stats.Mem.Pools.Count, _ = strconv.Atoi(m[6])
+		stats.Mem.Pools.Used, _ = bytesize.Parse([]byte(m[7]))
+		stats.Mem.Pools.Total, _ = bytesize.Parse([]byte(m[8]))
+	}
+
 	return
-
-	// 	statsData := clamdStats{}
-	// 	if inum,err := strconv.Atoi(stats.Pools); err == nil {
-	// 		statsData.Pools = inum
-	// 	}
-	// 	statsData.State = strings.Replace(stats.State,"STATE: ","",-1)
-	// 	if inum,err := strconv.Atoi(getNumber.FindString(stats.Queue)); err == nil {
-	// 		statsData.Queue = inum
-	// 	}
-
-	// 	mem := getNumber.FindAllString(stats.Memstats,-1)
-	// 	memLen := len(mem)
-	// 	if memLen >= 4 {
-	// 		if inum, err := strconv.ParseFloat(mem[0], 32 ); err == nil {
-	// 			statsData.Memory.Heap = inum * 1024.0 * 1024.0
-	// 		}
-	// 		if inum, err := strconv.ParseFloat(mem[1], 32 ); err == nil {
-	// 			statsData.Memory.Mmap = inum * 1024 * 1024
-	// 		}
-	// 		if inum, err := strconv.ParseFloat(mem[2], 32); err == nil {
-	// 			statsData.Memory.Used = inum * 1024 * 1024
-	// 		}
-	// 		if inum, err := strconv.ParseFloat(mem[3], 32); err == nil {
-	// 			statsData.Memory.Free = inum * 1024 * 1024
-	// 		}
-	// 		poolcount, _ := strconv.Atoi(mem[5])
-	// 		pools := make([]clamdStatsMemPool,poolcount)
-	// 		for i := 0; i < poolcount; i++ {
-	// 			idx := 6 + i * 2
-	// 			if inum,err := strconv.ParseFloat(mem[idx], 32 ); err == nil {
-	// 				pools[i].Used = inum * 1024 * 1024
-	// 			}
-	// 			if inum,err := strconv.ParseFloat( mem[idx + 1], 32); err == nil {
-	// 				pools[i].Total = inum * 1024 * 1024
-	// 			}
-	// 		}
-	// 		statsData.Memory.Pools = pools
-	// 	}
-	// 	clamd_stats.Stats = statsData
-
-	// 	return clamd_stats
-
 }
 
 // func getclamdStats(url string) (*clamdData) {
