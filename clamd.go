@@ -62,13 +62,13 @@ func NewClamDChecker(opts ClamDOptions) *ClamDChecker {
 			[]string{"version"},
 			nil),
 		promClamDDBVersion: prometheus.NewDesc(
-			"clamav_clamd_db_version",
-			"version of currently used virus definition DB",
+			"clamav_clamd_db_version_info",
+			"version of currently used virus definition database",
 			[]string{},
 			nil),
 		promClamDDBTime: prometheus.NewDesc(
-			"clamav_clamd_db_time",
-			"timestamp of currently used virus definition DB",
+			"clamav_clamd_db_time_info",
+			"unix epoch timestamp of currently used virus definition database",
 			[]string{},
 			nil),
 		promClamDStatsQueueLength: prometheus.NewDesc(
@@ -92,12 +92,12 @@ func NewClamDChecker(opts ClamDOptions) *ClamDChecker {
 			[]string{},
 			nil),
 		promClamDStatsMemHeap: prometheus.NewDesc(
-			"clamav_clamd_stats_mem_heap",
+			"clamav_clamd_stats_mem_heap_bytes",
 			"amount of memory used by libc from the heap",
 			[]string{},
 			nil),
 		promClamDStatsMemMMap: prometheus.NewDesc(
-			"clamav_clamd_stats_mem_mmap",
+			"clamav_clamd_stats_mem_mmap_bytes",
 			"amount of memory used by libc from mmap-allocated memory",
 			[]string{},
 			nil),
@@ -107,12 +107,12 @@ func NewClamDChecker(opts ClamDOptions) *ClamDChecker {
 			[]string{},
 			nil),
 		promClamDStatsMemFree: prometheus.NewDesc(
-			"clamav_clamd_stats_mem_free",
+			"clamav_clamd_stats_mem_free_bytes",
 			"amount of memory allocated by libc, that can't be freed due to fragmentation",
 			[]string{},
 			nil),
 		promClamDStatsMemReleasable: prometheus.NewDesc(
-			"clamav_clamd_stats_mem_realeasable",
+			"clamav_clamd_stats_mem_realeasable_bytes",
 			"amount of memory that can be reclaimed by libc",
 			[]string{},
 			nil),
@@ -122,12 +122,12 @@ func NewClamDChecker(opts ClamDOptions) *ClamDChecker {
 			[]string{},
 			nil),
 		promClamDStatsMemPoolsUsed: prometheus.NewDesc(
-			"clamav_clamd_stats_mem_pools_used",
+			"clamav_clamd_stats_mem_pools_used_bytes",
 			"amount of memory used by clamd's memory pool allocator",
 			[]string{},
 			nil),
 		promClamDStatsMemPoolsTotal: prometheus.NewDesc(
-			"clamav_clamd_stats_mem_pools_total",
+			"clamav_clamd_stats_mem_pools_total_bytes",
 			"total amount of memory allocated by clamd's memory pool allocator",
 			[]string{},
 			nil),
