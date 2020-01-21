@@ -46,10 +46,12 @@ func run() error {
 		return fmt.Errorf("failed to decode config %q: %v", *flagConfig, err)
 	}
 
+	registry := prometheus.NewPedanticRegistry()
+
 	if cfg.ClamD.Enable {
 		log.Println("enabling clamd checker")
 		c := NewClamDChecker(cfg.ClamD.ClamDOptions)
-		if err := prometheus.Register(c); err != nil {
+		if err := registry.Register(c); err != nil {
 			return fmt.Errorf("failed to register clamd checker: %v", err)
 		}
 
@@ -65,7 +67,7 @@ func run() error {
 	defer listen.Close()
 	log.Println("listening on", listen.Addr())
 
-	http.Handle("/metrics", promhttp.Handler())
+	http.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
 
 	srv := &http.Server{
 		ReadTimeout:  5 * time.Second,
