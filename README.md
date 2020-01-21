@@ -20,7 +20,7 @@ This is an example configuration file with all checks enabled:
       "listen": ":9328",
       "clamd": {
         "enable": true,
-        "URL": "unix:///var/lib/oag",
+        "URL": "unix:///var/lib/oag"
       }
     }
 
