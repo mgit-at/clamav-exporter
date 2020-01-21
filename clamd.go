@@ -22,7 +22,7 @@ var (
 	clamdVersionRegexp = regexp.MustCompile(`^ClamAV (?P<clamav_version>.*?)/(?P<db_version>.*?)/(?P<db_date>.*?)$`)
 
 	clamdStatsQueueRegexp   = regexp.MustCompile(`^(\d+)\s+item.*$`)
-	clamdStatsThreadsRegexp = regexp.MustCompile(`^live\s+(\d+)$`)
+	clamdStatsThreadsRegexp = regexp.MustCompile(`^live\s+(\d+)\s+idle\s+(\d+)\s+max\s+(\d+)\s+idle-timeout\s+(\d+)$`)
 )
 
 type ClamDOptions struct {
@@ -36,6 +36,9 @@ type ClamDChecker struct {
 	promClamDDBVersion        *prometheus.Desc
 	promClamDDBTime           *prometheus.Desc
 	promClamDStatsQueueLength *prometheus.Desc
+	promClamDStatsThreadsLive *prometheus.Desc
+	promClamDStatsThreadsIdle *prometheus.Desc
+	promClamDStatsThreadsMax  *prometheus.Desc
 }
 
 func NewClamDChecker(opts ClamDOptions) *ClamDChecker {
@@ -58,7 +61,22 @@ func NewClamDChecker(opts ClamDOptions) *ClamDChecker {
 			nil),
 		promClamDStatsQueueLength: prometheus.NewDesc(
 			"clamav_clamd_stats_queue_length",
-			"clamd queue length",
+			"mumber of items in clamd queue",
+			[]string{},
+			nil),
+		promClamDStatsThreadsLive: prometheus.NewDesc(
+			"clamav_clamd_stats_threads_live",
+			"number of  busy clamd threads",
+			[]string{},
+			nil),
+		promClamDStatsThreadsIdle: prometheus.NewDesc(
+			"clamav_clamd_stats_threads_idle",
+			"number of idle clamd threads",
+			[]string{},
+			nil),
+		promClamDStatsThreadsMax: prometheus.NewDesc(
+			"clamav_clamd_stats_threads_max",
+			"maximum number of clamd threads",
 			[]string{},
 			nil),
 	}
@@ -69,6 +87,9 @@ func (c *ClamDChecker) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.promClamDDBVersion
 	ch <- c.promClamDDBTime
 	ch <- c.promClamDStatsQueueLength
+	ch <- c.promClamDStatsThreadsLive
+	ch <- c.promClamDStatsThreadsIdle
+	ch <- c.promClamDStatsThreadsMax
 }
 
 func (c *ClamDChecker) Collect(ch chan<- prometheus.Metric) {
@@ -100,6 +121,21 @@ func (c *ClamDChecker) Collect(ch chan<- prometheus.Metric) {
 		c.promClamDStatsQueueLength,
 		prometheus.GaugeValue,
 		float64(stats.QueueLength),
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.promClamDStatsThreadsLive,
+		prometheus.GaugeValue,
+		float64(stats.Threads.Live),
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.promClamDStatsThreadsIdle,
+		prometheus.GaugeValue,
+		float64(stats.Threads.Idle),
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.promClamDStatsThreadsMax,
+		prometheus.GaugeValue,
+		float64(stats.Threads.Max),
 	)
 }
 
@@ -135,10 +171,9 @@ func (c *ClamDChecker) collectVersion() (version string, dbVersion int, dbTime t
 type clamdStats struct {
 	QueueLength int
 	Threads     struct {
-		Live        int
-		Idle        int
-		Max         int
-		IdleTimeout int
+		Live int
+		Idle int
+		Max  int
 	}
 }
 
@@ -147,7 +182,6 @@ func (c *ClamDChecker) collectStats() (stats clamdStats, err error) {
 	stats.Threads.Live = -1
 	stats.Threads.Idle = -1
 	stats.Threads.Max = -1
-	stats.Threads.IdleTimeout = -1
 
 	var cl *clamd.ClamD
 	if cl, err = clamd.NewClamd(c.opts.URL); err != nil {
@@ -165,6 +199,13 @@ func (c *ClamDChecker) collectStats() (stats clamdStats, err error) {
 		stats.QueueLength, _ = strconv.Atoi(q[1])
 	}
 
+	t := clamdStatsThreadsRegexp.FindStringSubmatch(s.Threads)
+	if len(t) == 5 {
+		stats.Threads.Live, _ = strconv.Atoi(t[1])
+		stats.Threads.Idle, _ = strconv.Atoi(t[2])
+		stats.Threads.Max, _ = strconv.Atoi(t[3])
+	}
+
 	return
 
 	// 	statsData := clamdStats{}
@@ -176,22 +217,6 @@ func (c *ClamDChecker) collectStats() (stats clamdStats, err error) {
 	// 		statsData.Queue = inum
 	// 	}
 
-	// 	threads := getNumber.FindAllString(stats.Threads,-1)
-	// 	if len(threads) == 4 {
-	// 		if inum,err := strconv.ParseFloat(threads[0], 32); err == nil {
-	// 			statsData.Threads.Live = inum
-	// 		}
-	// 		if inum,err := strconv.ParseFloat(threads[1], 32); err == nil {
-	// 			statsData.Threads.Idle = inum
-	// 		}
-
-	// 		if inum,err := strconv.ParseFloat(threads[2], 32); err == nil {
-	// 			statsData.Threads.Max = inum
-	// 		}
-	// 		if inum,err := strconv.ParseFloat(threads[3], 32); err == nil {
-	// 			statsData.Threads.Timeout = inum
-	// 		}
-	// 	}
 	// 	mem := getNumber.FindAllString(stats.Memstats,-1)
 	// 	memLen := len(mem)
 	// 	if memLen >= 4 {
