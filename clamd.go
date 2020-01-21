@@ -49,6 +49,8 @@ type ClamDChecker struct {
 	promClamDStatsMemPools      *prometheus.Desc
 	promClamDStatsMemPoolsUsed  *prometheus.Desc
 	promClamDStatsMemPoolsTotal *prometheus.Desc
+	promClamDEicarDetected      *prometheus.Desc
+	promClamDEicarDetectionTime *prometheus.Desc
 }
 
 func NewClamDChecker(opts ClamDOptions) *ClamDChecker {
@@ -129,6 +131,16 @@ func NewClamDChecker(opts ClamDOptions) *ClamDChecker {
 			"total amount of memory allocated by clamd's memory pool allocator",
 			[]string{},
 			nil),
+		promClamDEicarDetected: prometheus.NewDesc(
+			"clamav_clamd_eicar_detected",
+			"successfully detected eicar test stream",
+			[]string{},
+			nil),
+		promClamDEicarDetectionTime: prometheus.NewDesc(
+			"clamav_clamd_eicar_detection_time_seconds",
+			"eicar test stream detection time",
+			[]string{},
+			nil),
 	}
 }
 
@@ -148,6 +160,8 @@ func (c *ClamDChecker) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.promClamDStatsMemPools
 	ch <- c.promClamDStatsMemPoolsUsed
 	ch <- c.promClamDStatsMemPoolsTotal
+	ch <- c.promClamDEicarDetected
+	ch <- c.promClamDEicarDetectionTime
 }
 
 func (c *ClamDChecker) Collect(ch chan<- prometheus.Metric) {
@@ -236,6 +250,18 @@ func (c *ClamDChecker) Collect(ch chan<- prometheus.Metric) {
 		c.promClamDStatsMemPoolsTotal,
 		prometheus.GaugeValue,
 		float64(stats.Mem.Pools.Total),
+	)
+
+	eicarDetected, eicarTime, _ := c.collectEicar()
+	ch <- prometheus.MustNewConstMetric(
+		c.promClamDEicarDetected,
+		prometheus.GaugeValue,
+		float64(eicarDetected),
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.promClamDEicarDetectionTime,
+		prometheus.GaugeValue,
+		float64(eicarTime.Seconds()),
 	)
 }
 
@@ -336,33 +362,21 @@ func (c *ClamDChecker) collectStats() (stats clamdStats, err error) {
 	return
 }
 
-// func getclamdStats(url string) (*clamdData) {
+func (c *ClamDChecker) collectEicar() (detected int, elapsed time.Duration, err error) {
+	var cl *clamd.ClamD
+	if cl, err = clamd.NewClamd(c.opts.URL); err != nil {
+		return
+	}
 
-// 	getNumber := regexp.MustCompile("[.0-9]+")
-
-// 	c := clamd.NewClamd(url)
-// 	clamd_stats := &clamdData{}
-// 	clamd_stats.Err = ""
-
-// 	start := time.Now()
-// 	err := c.Ping()
-// 	elapsed := time.Since(start)
-// 	if err != nil {
-// 		clamd_stats.Err = err.Error()
-// 		return clamd_stats
-// 	}
-// 	clamd_stats.Ping = elapsed
-
-// 	reader := bytes.NewReader(clamd.EICAR)
-// 	chanFoo := make(chan bool)
-
-// 	start = time.Now()
-// 	_, err = c.ScanStream(reader, chanFoo)
-// 	elapsed = time.Since(start)
-// 	if err != nil {
-// 		clamd_stats.Err = err.Error()
-// 		return clamd_stats
-// 	}
-// 	clamd_stats.EicarScan = elapsed
-
-// }
+	start := time.Now()
+	var results []*clamd.Result
+	results, err = cl.ScanBytes(clamd.EICAR)
+	elapsed = time.Since(start)
+	if err != nil || len(results) != 1 {
+		return
+	}
+	if results[0].Status == clamd.RES_FOUND {
+		detected = 1
+	}
+	return
+}
