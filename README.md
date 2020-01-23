@@ -34,7 +34,7 @@ This is an example configuration file with all checks enabled:
 License
 -------
 
-prometheus-mgit-exporter is distributed under the Apache License.
+clamav-exporter is distributed under the Apache License.
 See LICENSE for details.
 
 > Copyright 2020 mgIT GmbH.
