@@ -21,6 +21,12 @@ This is an example configuration file with all checks enabled:
       "clamd": {
         "enable": true,
         "URL": "unix:///var/lib/oag"
+      },
+      "icap": {
+        "enable": true,
+        "host": "127.0.0.1",
+        "port": "1344",
+        "service": "squidclamav"
       }
     }
 

@@ -23,6 +23,10 @@ type Config struct {
 		Enable bool `json:"enable"`
 		ClamDOptions
 	} `json:"clamd"`
+	Icap struct {
+		Enable bool `json:"enable"`
+		IcapOptions
+	} `json:"icap"`
 }
 
 func run() error {
@@ -55,6 +59,13 @@ func run() error {
 			return fmt.Errorf("failed to register clamd checker: %v", err)
 		}
 
+	}
+	if cfg.Icap.Enable {
+		log.Println("enabling icap checker")
+		c := NewIcapChecker(cfg.Icap.IcapOptions)
+		if err := registry.Register(c); err != nil {
+			return fmt.Errorf("failed to register icap checker: %v", err)
+		}
 	}
 
 	if cfg.Listen == "" {

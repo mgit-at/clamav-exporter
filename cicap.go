@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/imgurbot12/clamd"
@@ -16,9 +16,8 @@ import (
 )
 
 var (
-	eicarRequest  []byte
-	icapRespCode  = regexp.MustCompile(`^ICAP/1\.0 (\d+)`)
-	icapRespFound = regexp.MustCompile(`^X-Infection-Found: .*Threat=(.*);`)
+	icapRespCodeRegexp        = regexp.MustCompile(`ICAP/1\.0 (\d+)`)
+	icapRespThreatFoundRegexp = regexp.MustCompile(`X-Infection-Found: .*Threat=(.*);`)
 )
 
 type IcapOptions struct {
@@ -31,6 +30,7 @@ type IcapChecker struct {
 	opts IcapOptions
 
 	promIcapUp                 *prometheus.Desc
+	promIcapEicarIcapCode      *prometheus.Desc
 	promIcapEicarDetected      *prometheus.Desc
 	promIcapEicarDetectionTime *prometheus.Desc
 }
@@ -52,6 +52,11 @@ func NewIcapChecker(opts IcapOptions) *IcapChecker {
 			"connection to clamd is successful",
 			[]string{}, // TODO label? "version"},
 			nil),
+		promIcapEicarIcapCode: prometheus.NewDesc(
+			"clamav_icap_eicar_icap_code",
+			"ICAP result code for eicar test stream",
+			[]string{},
+			nil),
 		promIcapEicarDetected: prometheus.NewDesc(
 			"clamav_icap_eicar_detected",
 			"successfully detected eicar test stream",
@@ -67,13 +72,14 @@ func NewIcapChecker(opts IcapOptions) *IcapChecker {
 
 func (c *IcapChecker) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.promIcapUp
+	ch <- c.promIcapEicarIcapCode
 	ch <- c.promIcapEicarDetected
 	ch <- c.promIcapEicarDetectionTime
 }
 
 func (c *IcapChecker) Collect(ch chan<- prometheus.Metric) {
 	up := 1.0
-	eicarDetected, eicarTime, err := c.collectEicar()
+	eicarIcapCode, eicarDetected, eicarTime, err := c.collectEicar()
 	if err != nil {
 		up = 0
 	}
@@ -82,6 +88,11 @@ func (c *IcapChecker) Collect(ch chan<- prometheus.Metric) {
 		prometheus.GaugeValue,
 		up,
 		// TODO version label?
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.promIcapEicarIcapCode,
+		prometheus.GaugeValue,
+		float64(eicarIcapCode),
 	)
 	ch <- prometheus.MustNewConstMetric(
 		c.promIcapEicarDetected,
@@ -95,7 +106,7 @@ func (c *IcapChecker) Collect(ch chan<- prometheus.Metric) {
 	)
 }
 
-func (c *IcapChecker) collectEicar() (detected int, elapsed time.Duration, err error) {
+func (c *IcapChecker) collectEicar() (icapCode, detected int, elapsed time.Duration, err error) {
 	hostPort := net.JoinHostPort(c.opts.Host, c.opts.Port)
 	var addr *net.TCPAddr
 	if addr, err = net.ResolveTCPAddr("tcp", hostPort); err != nil {
@@ -107,17 +118,25 @@ func (c *IcapChecker) collectEicar() (detected int, elapsed time.Duration, err e
 	if conn, err = net.DialTCP("tcp", nil, addr); err != nil {
 		return
 	}
+	defer conn.Close()
 
 	req := bytes.NewBuffer(nil) // TODO pre-alloc correct size
 	req.WriteString(fmt.Sprintf("RESPMOD icap://%s/%s ICAP/1.0\r\n", hostPort, c.opts.Service))
-	req.WriteString(fmt.Sprintf("Host: %s", hostPort))
+	req.WriteString(fmt.Sprintf("Host: %s\r\n", hostPort))
 	req.WriteString("User-Agent: clamav-exporter\r\n")
 	// see Allow: 204 in https://tools.ietf.org/html/rfc3507#section-4.6
 	req.WriteString("Allow: 204\r\n")
+	httpHeader := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(clamd.EICAR))
+	req.WriteString(fmt.Sprintf("Encapsulated: res-hdr=0, res-body=%d\r\n", len(httpHeader)))
 	req.WriteString("\r\n")
-	req.Write(clamd.EICAR)
-	reqLen := req.Len()
+	req.WriteString(httpHeader)
 
+	req.WriteString(fmt.Sprintf("%x\r\n", len(clamd.EICAR)))
+	req.Write(clamd.EICAR)
+	req.WriteString("\r\n")
+	req.WriteString("0; ieof\r\n\r\n")
+
+	reqLen := req.Len()
 	var n int64
 	n, err = io.Copy(conn, req)
 	if err != nil {
@@ -139,12 +158,21 @@ func (c *IcapChecker) collectEicar() (detected int, elapsed time.Duration, err e
 	}
 
 	elapsed = time.Since(start)
-	detected = parseResult(res)
+	icapCode, detected = parseIcapResult(res)
 
 	return
 }
 
-func parseResult(icapRes []byte) int {
-	log.Printf("icap response:\n%v", string(icapRes))
-	return -10
+func parseIcapResult(icapRes []byte) (code, found int) {
+	code = -1
+
+	c := icapRespCodeRegexp.FindSubmatch(icapRes)
+	if len(c) == 2 {
+		code, _ = strconv.Atoi(string(c[1]))
+	}
+	t := icapRespThreatFoundRegexp.FindSubmatch(icapRes)
+	if len(t) == 2 {
+		found = 1
+	}
+	return
 }
