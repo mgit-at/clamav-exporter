@@ -25,7 +25,7 @@ func TestParseVersion(t *testing.T) {
 	r.Equal(matches[2], "25701")
 	r.Equal(matches[3], "Mon Jan 20 12:41:43 2020")
 
-	dbTime, err := time.Parse(clamdDBTimeFormat, matches[3])
+	dbTime, err := time.ParseInLocation(clamdDBTimeFormat, matches[3], time.UTC)
 	r.NoError(err)
 	r.Equal(dbTime.Unix(), dbTimeEpoch)
 }

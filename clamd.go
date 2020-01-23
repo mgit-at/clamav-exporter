@@ -287,7 +287,9 @@ func (c *ClamDChecker) collectVersion() (version string, dbVersion int, dbTime t
 		return
 	}
 
-	if dbTime, err = time.Parse(clamdDBTimeFormat, matches[3]); err != nil {
+	// clamd reports the db time in local time, for now we assume that the system timezone of the host clamd
+	// is running on is the same as on the host the exporter is running on, TODO: add a config option for this
+	if dbTime, err = time.ParseInLocation(clamdDBTimeFormat, matches[3], time.Local); err != nil {
 		return
 	}
 
