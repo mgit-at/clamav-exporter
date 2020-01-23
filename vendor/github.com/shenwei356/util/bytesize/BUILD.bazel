@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["bytesize.go"],
+    importmap = "github.com/mgit-at/clamav-exporter/vendor/github.com/shenwei356/util/bytesize",
+    importpath = "github.com/shenwei356/util/bytesize",
+    visibility = ["//visibility:public"],
+)
