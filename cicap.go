@@ -34,6 +34,8 @@ type IcapChecker struct {
 	promIcapEicarIcapCode      *prometheus.Desc
 	promIcapEicarDetected      *prometheus.Desc
 	promIcapEicarDetectionTime *prometheus.Desc
+	promIcapHelloOK            *prometheus.Desc
+	promIcapHelloOKTime        *prometheus.Desc
 }
 
 func NewIcapChecker(opts IcapOptions) *IcapChecker {
@@ -68,6 +70,16 @@ func NewIcapChecker(opts IcapOptions) *IcapChecker {
 			"eicar test stream detection time",
 			[]string{},
 			nil),
+		promIcapHelloOK: prometheus.NewDesc(
+			"clamav_icap_hello_ok",
+			"correctly identified hello as non-threatening",
+			[]string{},
+			nil),
+		promIcapHelloOKTime: prometheus.NewDesc(
+			"clamav_icap_hello_ok_time_seconds",
+			"unthreatening hello test stream detection time",
+			[]string{},
+			nil),
 	}
 }
 
@@ -76,6 +88,8 @@ func (c *IcapChecker) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.promIcapEicarIcapCode
 	ch <- c.promIcapEicarDetected
 	ch <- c.promIcapEicarDetectionTime
+	ch <- c.promIcapHelloOK
+	ch <- c.promIcapHelloOKTime
 }
 
 func (c *IcapChecker) Collect(ch chan<- prometheus.Metric) {
@@ -105,10 +119,35 @@ func (c *IcapChecker) Collect(ch chan<- prometheus.Metric) {
 		prometheus.GaugeValue,
 		float64(eicarTime.Seconds()),
 	)
+
+	helloOK, helloTime := c.collectHello()
+
+	ch <- prometheus.MustNewConstMetric(
+		c.promIcapHelloOK,
+		prometheus.GaugeValue,
+		float64(helloOK),
+	)
+	ch <- prometheus.MustNewConstMetric(
+		c.promIcapHelloOKTime,
+		prometheus.GaugeValue,
+		float64(helloTime.Seconds()),
+	)
 }
 
-func (c *IcapChecker) collectEicar() (icapServerVersion string, icapCode, detected int, elapsed time.Duration, err error) {
+func (c *IcapChecker) collectEicar() (icapServerVersion string, icapCode, threatDetected int, threatElapsed time.Duration, err error) {
 	return c.testIcap(clamd.EICAR)
+}
+
+func (c *IcapChecker) collectHello() (helloOK int, helloElapsed time.Duration) {
+	_, _, helloIsThreat, elapsed, err := c.testIcap([]byte("I am a totally legit non-threatening Hello message from The Beyond!"))
+	if err != nil {
+		return
+	}
+	if helloIsThreat == 0 {
+		helloOK = 1
+	}
+	helloElapsed = elapsed
+	return
 }
 
 func (c *IcapChecker) testIcap(data []byte) (icapServerVersion string, icapCode, detected int, elapsed time.Duration, err error) {
