@@ -16,6 +16,7 @@ import (
 )
 
 var (
+	icapServerVersionRegexp   = regexp.MustCompile(`Server: C-ICAP/(.+?)\r\n`)
 	icapRespCodeRegexp        = regexp.MustCompile(`ICAP/1\.0 (\d+)`)
 	icapRespThreatFoundRegexp = regexp.MustCompile(`X-Infection-Found: .*Threat=(.*);`)
 )
@@ -50,7 +51,7 @@ func NewIcapChecker(opts IcapOptions) *IcapChecker {
 		promIcapUp: prometheus.NewDesc(
 			"clamav_icap_up",
 			"connection to clamd is successful",
-			[]string{}, // TODO label? "version"},
+			[]string{"version"},
 			nil),
 		promIcapEicarIcapCode: prometheus.NewDesc(
 			"clamav_icap_eicar_icap_code",
@@ -79,7 +80,7 @@ func (c *IcapChecker) Describe(ch chan<- *prometheus.Desc) {
 
 func (c *IcapChecker) Collect(ch chan<- prometheus.Metric) {
 	up := 1.0
-	eicarIcapCode, eicarDetected, eicarTime, err := c.collectEicar()
+	icapServerVersion, eicarIcapCode, eicarDetected, eicarTime, err := c.collectEicar()
 	if err != nil {
 		up = 0
 	}
@@ -87,7 +88,7 @@ func (c *IcapChecker) Collect(ch chan<- prometheus.Metric) {
 		c.promIcapUp,
 		prometheus.GaugeValue,
 		up,
-		// TODO version label?
+		icapServerVersion,
 	)
 	ch <- prometheus.MustNewConstMetric(
 		c.promIcapEicarIcapCode,
@@ -106,7 +107,11 @@ func (c *IcapChecker) Collect(ch chan<- prometheus.Metric) {
 	)
 }
 
-func (c *IcapChecker) collectEicar() (icapCode, detected int, elapsed time.Duration, err error) {
+func (c *IcapChecker) collectEicar() (icapServerVersion string, icapCode, detected int, elapsed time.Duration, err error) {
+	return c.testIcap(clamd.EICAR)
+}
+
+func (c *IcapChecker) testIcap(data []byte) (icapServerVersion string, icapCode, detected int, elapsed time.Duration, err error) {
 	hostPort := net.JoinHostPort(c.opts.Host, c.opts.Port)
 	var addr *net.TCPAddr
 	if addr, err = net.ResolveTCPAddr("tcp", hostPort); err != nil {
@@ -131,8 +136,8 @@ func (c *IcapChecker) collectEicar() (icapCode, detected int, elapsed time.Durat
 	req.WriteString("\r\n")
 	req.WriteString(httpHeader)
 
-	req.WriteString(fmt.Sprintf("%x\r\n", len(clamd.EICAR)))
-	req.Write(clamd.EICAR)
+	req.WriteString(fmt.Sprintf("%x\r\n", len(data)))
+	req.Write(data)
 	req.WriteString("\r\n")
 	req.WriteString("0; ieof\r\n\r\n")
 
@@ -158,14 +163,17 @@ func (c *IcapChecker) collectEicar() (icapCode, detected int, elapsed time.Durat
 	}
 
 	elapsed = time.Since(start)
-	icapCode, detected = parseIcapResult(res)
-
+	icapServerVersion, icapCode, detected = parseIcapResult(res)
 	return
 }
 
-func parseIcapResult(icapRes []byte) (code, found int) {
+func parseIcapResult(icapRes []byte) (serverVersion string, code, found int) {
 	code = -1
 
+	v := icapServerVersionRegexp.FindSubmatch(icapRes)
+	if len(v) == 2 {
+		serverVersion = string(v[1])
+	}
 	c := icapRespCodeRegexp.FindSubmatch(icapRes)
 	if len(c) == 2 {
 		code, _ = strconv.Atoi(string(c[1]))
