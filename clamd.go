@@ -5,6 +5,7 @@ package main
 
 import (
 	"errors"
+	"math"
 	"regexp"
 	"strconv"
 	"time"
@@ -169,6 +170,8 @@ func (c *ClamDChecker) Collect(ch chan<- prometheus.Metric) {
 	version, dbVersion, dbTime, err := c.collectVersion()
 	if err != nil {
 		up = 0.0
+		dbVersion = math.NaN()
+		dbTime = math.NaN()
 	}
 
 	ch <- prometheus.MustNewConstMetric(
@@ -180,76 +183,76 @@ func (c *ClamDChecker) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDDBVersion,
 		prometheus.GaugeValue,
-		float64(dbVersion),
+		dbVersion,
 	)
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDDBTime,
 		prometheus.GaugeValue,
-		float64(dbTime.Unix()),
+		dbTime,
 	)
 
 	stats, _ := c.collectStats()
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDStatsQueueLength,
 		prometheus.GaugeValue,
-		float64(stats.Queue.Length),
+		stats.Queue.Length,
 	)
 
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDStatsThreadsLive,
 		prometheus.GaugeValue,
-		float64(stats.Threads.Live),
+		stats.Threads.Live,
 	)
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDStatsThreadsIdle,
 		prometheus.GaugeValue,
-		float64(stats.Threads.Idle),
+		stats.Threads.Idle,
 	)
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDStatsThreadsMax,
 		prometheus.GaugeValue,
-		float64(stats.Threads.Max),
+		stats.Threads.Max,
 	)
 
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDStatsMemHeap,
 		prometheus.GaugeValue,
-		float64(stats.Mem.Heap),
+		stats.Mem.Heap,
 	)
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDStatsMemMMap,
 		prometheus.GaugeValue,
-		float64(stats.Mem.MMap),
+		stats.Mem.MMap,
 	)
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDStatsMemUsed,
 		prometheus.GaugeValue,
-		float64(stats.Mem.Used),
+		stats.Mem.Used,
 	)
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDStatsMemFree,
 		prometheus.GaugeValue,
-		float64(stats.Mem.Free),
+		stats.Mem.Free,
 	)
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDStatsMemReleasable,
 		prometheus.GaugeValue,
-		float64(stats.Mem.Releasable),
+		stats.Mem.Releasable,
 	)
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDStatsMemPools,
 		prometheus.GaugeValue,
-		float64(stats.Mem.Pools.Count),
+		stats.Mem.Pools.Count,
 	)
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDStatsMemPoolsUsed,
 		prometheus.GaugeValue,
-		float64(stats.Mem.Pools.Used),
+		stats.Mem.Pools.Used,
 	)
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDStatsMemPoolsTotal,
 		prometheus.GaugeValue,
-		float64(stats.Mem.Pools.Total),
+		stats.Mem.Pools.Total,
 	)
 
 	eicarDetected, eicarTime, _ := c.collectEicar()
@@ -261,11 +264,11 @@ func (c *ClamDChecker) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(
 		c.promClamDEicarDetectionTime,
 		prometheus.GaugeValue,
-		float64(eicarTime.Seconds()),
+		eicarTime,
 	)
 }
 
-func (c *ClamDChecker) collectVersion() (version string, dbVersion int, dbTime time.Time, err error) {
+func (c *ClamDChecker) collectVersion() (version string, dbVersion, dbTime float64, err error) {
 	var cl *clamd.ClamD
 	if cl, err = clamd.NewClamd(c.opts.URL); err != nil {
 		return
@@ -283,49 +286,75 @@ func (c *ClamDChecker) collectVersion() (version string, dbVersion int, dbTime t
 
 	version = matches[1]
 
-	if dbVersion, err = strconv.Atoi(matches[2]); err != nil {
+	var dbVersionValue int
+	if dbVersionValue, err = strconv.Atoi(matches[2]); err != nil {
 		return
 	}
+	dbVersion = float64(dbVersionValue)
 
 	// clamd reports the db time in local time, for now we assume that the system timezone of the host clamd
 	// is running on is the same as on the host the exporter is running on, TODO: add a config option for this
-	if dbTime, err = time.ParseInLocation(clamdDBTimeFormat, matches[3], time.Local); err != nil {
+	var dbTimeValue time.Time
+	if dbTimeValue, err = time.ParseInLocation(clamdDBTimeFormat, matches[3], time.Local); err != nil {
 		return
 	}
-
+	dbTime = float64(dbTimeValue.Unix())
 	return
 }
 
 type clamdStats struct {
 	Queue struct {
-		Length int
+		Length float64
 	}
 	Threads struct {
-		Live int
-		Idle int
-		Max  int
+		Live float64
+		Idle float64
+		Max  float64
 	}
 	Mem struct {
-		Heap       bytesize.ByteSize
-		MMap       bytesize.ByteSize
-		Used       bytesize.ByteSize
-		Free       bytesize.ByteSize
-		Releasable bytesize.ByteSize
+		Heap       float64
+		MMap       float64
+		Used       float64
+		Free       float64
+		Releasable float64
 
 		Pools struct {
-			Count int
-			Used  bytesize.ByteSize
-			Total bytesize.ByteSize
+			Count float64
+			Used  float64
+			Total float64
 		}
 	}
 }
 
+func cvtInt(number string) float64 {
+	v, err := strconv.Atoi(number)
+	if err != nil {
+		return math.NaN()
+	}
+	return float64(v)
+}
+
+func cvtByteSize(number string) float64 {
+	v, err := bytesize.Parse([]byte(number))
+	if err != nil {
+		return math.NaN()
+	}
+	return float64(v)
+}
+
 func (c *ClamDChecker) collectStats() (stats clamdStats, err error) {
-	stats.Queue.Length = -1
-	stats.Threads.Live = -1
-	stats.Threads.Idle = -1
-	stats.Threads.Max = -1
-	stats.Mem.Pools.Count = -1
+	stats.Queue.Length = math.NaN()
+	stats.Threads.Live = math.NaN()
+	stats.Threads.Idle = math.NaN()
+	stats.Threads.Max = math.NaN()
+	stats.Mem.Heap = math.NaN()
+	stats.Mem.MMap = math.NaN()
+	stats.Mem.Used = math.NaN()
+	stats.Mem.Free = math.NaN()
+	stats.Mem.Releasable = math.NaN()
+	stats.Mem.Pools.Count = math.NaN()
+	stats.Mem.Pools.Used = math.NaN()
+	stats.Mem.Pools.Total = math.NaN()
 
 	var cl *clamd.ClamD
 	if cl, err = clamd.NewClamd(c.opts.URL); err != nil {
@@ -339,32 +368,34 @@ func (c *ClamDChecker) collectStats() (stats clamdStats, err error) {
 
 	q := clamdStatsQueueRegexp.FindStringSubmatch(s.Queue)
 	if len(q) == 2 {
-		stats.Queue.Length, _ = strconv.Atoi(q[1])
+		stats.Queue.Length = cvtInt(q[1])
 	}
 
 	t := clamdStatsThreadsRegexp.FindStringSubmatch(s.Threads)
 	if len(t) == 5 {
-		stats.Threads.Live, _ = strconv.Atoi(t[1])
-		stats.Threads.Idle, _ = strconv.Atoi(t[2])
-		stats.Threads.Max, _ = strconv.Atoi(t[3])
+		stats.Threads.Live = cvtInt(t[1])
+		stats.Threads.Idle = cvtInt(t[2])
+		stats.Threads.Max = cvtInt(t[3])
 	}
 
 	m := clamdStatsMemRegexp.FindStringSubmatch(s.Memstats)
 	if len(m) == 9 {
-		stats.Mem.Heap, _ = bytesize.Parse([]byte(m[1]))
-		stats.Mem.MMap, _ = bytesize.Parse([]byte(m[2]))
-		stats.Mem.Used, _ = bytesize.Parse([]byte(m[3]))
-		stats.Mem.Free, _ = bytesize.Parse([]byte(m[4]))
-		stats.Mem.Releasable, _ = bytesize.Parse([]byte(m[5]))
-		stats.Mem.Pools.Count, _ = strconv.Atoi(m[6])
-		stats.Mem.Pools.Used, _ = bytesize.Parse([]byte(m[7]))
-		stats.Mem.Pools.Total, _ = bytesize.Parse([]byte(m[8]))
+		stats.Mem.Heap = cvtByteSize(m[1])
+		stats.Mem.MMap = cvtByteSize(m[2])
+		stats.Mem.Used = cvtByteSize(m[3])
+		stats.Mem.Free = cvtByteSize(m[4])
+		stats.Mem.Releasable = cvtByteSize(m[5])
+		stats.Mem.Pools.Count = cvtInt(m[6])
+		stats.Mem.Pools.Used = cvtByteSize(m[7])
+		stats.Mem.Pools.Total = cvtByteSize(m[8])
 	}
 
 	return
 }
 
-func (c *ClamDChecker) collectEicar() (detected int, elapsed time.Duration, err error) {
+func (c *ClamDChecker) collectEicar() (detected int, elapsed float64, err error) {
+	elapsed = math.NaN()
+
 	var cl *clamd.ClamD
 	if cl, err = clamd.NewClamd(c.opts.URL); err != nil {
 		return
@@ -373,7 +404,7 @@ func (c *ClamDChecker) collectEicar() (detected int, elapsed time.Duration, err 
 	start := time.Now()
 	var results []*clamd.Result
 	results, err = cl.ScanBytes(clamd.EICAR)
-	elapsed = time.Since(start)
+	elapsed = time.Since(start).Seconds()
 	if err != nil || len(results) != 1 {
 		return
 	}

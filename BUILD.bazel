@@ -7,8 +7,8 @@ gazelle(name = "gazelle")
 go_library(
     name = "go_default_library",
     srcs = [
-        "cicap.go",
         "clamd.go",
+        "icap.go",
         "main.go",
     ],
     importpath = "github.com/mgit-at/clamav-exporter",

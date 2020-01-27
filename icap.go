@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math"
 	"net"
 	"regexp"
 	"strconv"
@@ -117,7 +118,7 @@ func (c *IcapChecker) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(
 		c.promIcapEicarDetectionTime,
 		prometheus.GaugeValue,
-		float64(eicarTime.Seconds()),
+		eicarTime,
 	)
 
 	helloOK, helloTime := c.collectHello()
@@ -130,27 +131,30 @@ func (c *IcapChecker) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(
 		c.promIcapHelloOKTime,
 		prometheus.GaugeValue,
-		float64(helloTime.Seconds()),
+		helloTime,
 	)
 }
 
-func (c *IcapChecker) collectEicar() (icapServerVersion string, icapCode, threatDetected int, threatElapsed time.Duration, err error) {
+func (c *IcapChecker) collectEicar() (icapServerVersion string, icapCode, threatDetected int, threatElapsed float64, err error) {
 	return c.testIcap(clamd.EICAR)
 }
 
-func (c *IcapChecker) collectHello() (helloOK int, helloElapsed time.Duration) {
-	_, _, helloIsThreat, elapsed, err := c.testIcap([]byte("I am a totally legit non-threatening Hello message from The Beyond!"))
+func (c *IcapChecker) collectHello() (helloOK int, helloElapsed float64) {
+	var err error
+	var helloIsThreat int
+	_, _, helloIsThreat, helloElapsed, err = c.testIcap([]byte("I am a totally legit non-threatening Hello message from The Beyond!"))
 	if err != nil {
 		return
 	}
 	if helloIsThreat == 0 {
 		helloOK = 1
 	}
-	helloElapsed = elapsed
 	return
 }
 
-func (c *IcapChecker) testIcap(data []byte) (icapServerVersion string, icapCode, detected int, elapsed time.Duration, err error) {
+func (c *IcapChecker) testIcap(data []byte) (icapServerVersion string, icapCode, detected int, elapsed float64, err error) {
+	elapsed = math.NaN()
+
 	hostPort := net.JoinHostPort(c.opts.Host, c.opts.Port)
 	var addr *net.TCPAddr
 	if addr, err = net.ResolveTCPAddr("tcp", hostPort); err != nil {
@@ -158,6 +162,10 @@ func (c *IcapChecker) testIcap(data []byte) (icapServerVersion string, icapCode,
 	}
 
 	start := time.Now()
+	defer func() {
+		elapsed = time.Since(start).Seconds()
+	}()
+
 	var conn *net.TCPConn
 	if conn, err = net.DialTCP("tcp", nil, addr); err != nil {
 		return
@@ -201,7 +209,6 @@ func (c *IcapChecker) testIcap(data []byte) (icapServerVersion string, icapCode,
 		return
 	}
 
-	elapsed = time.Since(start)
 	icapServerVersion, icapCode, detected = parseIcapResult(res)
 	return
 }
