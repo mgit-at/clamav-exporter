@@ -103,7 +103,7 @@ func NewClamDChecker(opts ClamDOptions) *ClamDChecker {
 			[]string{},
 			nil),
 		promClamDStatsMemUsed: prometheus.NewDesc(
-			"clamav_clamd_stats_mem_used",
+			"clamav_clamd_stats_mem_used_bytes",
 			"amount of useful memory allocated by libc",
 			[]string{},
 			nil),
